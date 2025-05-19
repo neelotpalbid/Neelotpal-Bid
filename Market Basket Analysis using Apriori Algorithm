@@ -1,0 +1,39 @@
+#the following code is executed on Pycharm (IDE)
+
+import pandas as pd
+from fastexcel import read_excel
+pd.set_option('display.max_columns', None)
+
+df = pd.read_excel("D:\\Sample - Superstore.xls")
+
+print(df.describe())
+print(df.head())
+
+from mlxtend.frequent_patterns import apriori, association_rules
+
+
+
+basket = df.groupby(['Order ID', 'Sub-Category'])['Quantity'].sum().unstack().reset_index().fillna(0).set_index('Order ID')
+
+
+def encode_units(x):
+    return 1 if x >= 1 else 0
+
+basket_sets = basket.applymap(encode_units)
+
+print(basket_sets.head())
+
+
+frequent_itemsets = apriori(basket_sets, min_support=0.01, use_colnames=True)
+
+
+print(frequent_itemsets.sort_values(by="support", ascending=False).head())
+
+rules = association_rules(frequent_itemsets, metric="lift", min_threshold=1)
+
+
+rules = rules.sort_values(['confidence', 'lift'], ascending=[False, False])
+
+
+print(rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']])
+

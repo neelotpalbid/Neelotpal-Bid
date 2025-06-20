@@ -1,0 +1,76 @@
+import pandas as pd
+import numpy as np
+
+np.random.seed(42)
+
+n = 50
+
+
+age = np.random.randint(20, 60, size=50)
+income = np.random.randint(30000, 120000, size=50)
+experience = np.random.randint(0, 40, size=50)
+satisfaction = np.round(np.random.uniform(1, 10, size=50), 2)
+
+
+education = np.random.choice(['High School', 'Bachelor', 'Master'], size=n)
+city = np.random.choice(['Mumbai', 'Delhi', 'Bangalore'], size=n)
+married = np.random.choice(['Yes', 'No'], size=50)
+
+target_salary = (
+    0.4 * age +
+    0.3 * experience +
+    0.00015 * income +
+    2.5 * satisfaction +
+    np.random.normal(0, 8, n)  # random noise
+)
+
+df = pd.DataFrame({
+    'age': age,
+    'income': income,
+    'education': education,
+    'city': city,
+    'experience': experience,
+    'satisfaction': satisfaction,
+    'married': married,
+    'target_salary': target_salary
+})
+
+for col in df.columns:
+    null_indices = np.random.choice(df.index, size=int(0.1 * n), replace=False)
+    df.loc[null_indices, col] = np.nan
+
+print(df)
+
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, accuracy_score
+
+df_clean = df.dropna().copy()
+print(df_clean)
+
+df_clean["education"] = df_clean["education"].str.strip()
+df_clean["city"] = df_clean["city"].str.strip()
+df_clean["married"]= df_clean["married"].str.strip()
+
+df_clean['education'] = df_clean['education'].map({'High School': 1, 'Bachelor': 2, 'Master': 3})
+df_clean['city'] = df_clean['city'].map({'Mumbai': 1, 'Delhi': 2, 'Bangalore': 3})
+df_clean['married'] = df_clean['married'].map({'No': 0, 'Yes': 1})
+
+print(df_clean)
+
+df_clean["satisfaction"] = df_clean["satisfaction"].astype(int)
+df_clean["target_salary"] = df_clean["target_salary"].astype(int)
+print(df_clean)
+
+x = df_clean[["age","income","experience","satisfaction"]]
+y= df_clean[["target_salary"]]
+
+x_train,x_test,y_test,y_train = train_test_split(x,y,train_size = 0.5, random_state = 42)
+
+model = LogisticRegression(max_iter = 400)
+model.fit(x_train, y_train)
+pred = model.predict(x_test)
+
+print(classification_report(y_test, pred))
+print(accuracy_score(y_test, pred))

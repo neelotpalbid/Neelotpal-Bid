@@ -1,0 +1,551 @@
+#app.py
+from flask import Flask, render_template, request, send_from_directory, flash
+from delhi_court import scrape_case  # Ensure this import matches your scraper filename
+import sqlite3
+import datetime
+import os
+import json # To store structured data in DB
+
+app = Flask(__name__)
+app.secret_key = 'your_secret_key_here' # IMPORTANT: Change this to a strong, random key
+
+# Define the path where downloaded PDFs will be stored (optional, for local serving)
+DOWNLOAD_FOLDER = 'downloaded_pdfs' # This will create 'downloaded_pdfs' inside 'court_scraper_app'
+if not os.path.exists(DOWNLOAD_FOLDER):
+    os.makedirs(DOWNLOAD_FOLDER)
+
+# Define case types and years (consistent with scraper)
+CASE_TYPES = sorted([
+    "ADMIN.REPORT", "ARB.A.", "ARB. A. (COMM.)", "ARB.P.", "BAIL APPLN.", "CA", "CA (COMM.IPD-CR)",
+    "C.A.(COMM.IPD-GI)", "C.A.(COMM.IPD-PAT)", "C.A.(COMM.IPD-PV)", "C.A.(COMM.IPD-TM)", "CAVEAT(CO.)",
+    "CC(ARB.)", "CCP(CO.)", "CCP(REF)", "CEAC", "CEAR", "CHAT.A.C.", "CHAT.A.REF", "CMI", "CM(M)",
+    "CM(M)-IPD", "C.O.", "CO.APP.", "CO.APPL.(C)", "CO.APPL.(M)", "CO.A(SB)", "C.O.(COMM.IPD-CR)",
+    "C.O.(COMM.IPD-GI)", "C.O.(COMM.IPD-PAT)", "C.O. (COMM.IPD-TM)", "CO.EX.", "CONT.APP.(C)",
+    "CONT.CAS(C)", "CONT.CAS.(CRL)", "CO.PET.", "C.REF.(O)", "CRL.A.", "CRL.L.P.", "CRL.M.C.",
+    "CRL.M.(CO.)", "CRL.M.I.", "CRL.O.", "CRL.O.(CO.)", "CRL.REF.", "CRL.REV.P.", "CRL.REV.P.(MAT.)",
+    "CRL.REV.P.(NDPS)", "CRL.REV.P.(NI)", "C.R.P.", "CRP-IPD", "C.RULE", "CS(COMM)", "CS(OS)",
+    "CS(OS) GP", "CUSAA", "CUS.A.C.", "CUS.A.R.", "CUSTOM A.", "DEATH SENTENCE REF.", "DEMO", "EDC",
+    "EDR", "EFA(COMM)", "EFA(OS)", "EFA(OS)  (COMM)", "EFA(OS)(IPD)", "EL.PET.", "ETR", "EX.F.A.",
+    "EX.P.", "EX.S.A.", "FAO", "FAO (COMM)", "FAO-IPD", "FAO(OS)", "FAO(OS) (COMM)", "FAO(OS)(IPD)",
+    "GCAC", "GCAR", "GTA", "GTC", "GTR", "I.A.", "I.P.A.", "ITA", "ITC", "ITR", "ITSA", "LA.APP.",
+    "LPA", "MAC.APP.", "MAT.", "MAT.APP.", "MAT.APP.(F.C.)", "MAT.CASE", "MAT.REF.",
+    "MISC. APPEAL(PMLA)", "OA", "OCJA", "O.M.P.", "O.M.P. (COMM)", "OMP (CONT.)", "O.M.P. (E)",
+    "O.M.P. (E) (COMM.)", "O.M.P.(EFA)(COMM.)", "OMP (ENF.) (COMM.)", "O.M.P.(I)", "O.M.P.(I) (COMM.)",
+    "O.M.P. (J) (COMM.)", "O.M.P. (MISC.)", "O.M.P.(MISC.)(COMM.)", "O.M.P.(T)", "O.M.P. (T) (COMM.)",
+    "O.REF.", "RC.REV.", "RC.S.A.", "RERA APPEAL", "REVIEW PET.", "RFA", "RFA(COMM)", "RFA-IPD",
+    "RFA(OS)", "RFA(OS)(COMM)", "RF(OS)(IPD)", "RSA", "SCA", "SDR", "SERTA", "ST.APPL.", "STC",
+    "ST.REF.", "SUR.T.REF.", "TEST.CAS.", "TR.P.(C)", "TR.P.(C.)", "TR.P.(CRL.)", "VAT APPEAL",
+    "W.P.(C)", "W.P.(C)-IPD", "WP(C)(IPD)", "W.P.(CRL)", "WTA", "WTC", "WTR"
+])
+YEARS = [str(y) for y in range(datetime.datetime.now().year, 1950, -1)]
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        case_type = request.form['case_type']
+        case_number = request.form['case_number']
+        case_year = request.form['case_year']
+
+        if not case_number.strip():
+            flash("Please enter a case number.", 'warning')
+            return render_template('index.html', case_types=CASE_TYPES, years=YEARS)
+
+        # Scrape data
+        # The scrape_case function now returns a dict and raw HTML
+        scraped_data, raw_html = scrape_case(case_type, case_number, case_year)
+
+        # Connect to SQLite database
+        conn = sqlite3.connect('db.sqlite3') # This will create db.sqlite3 inside 'court_scraper_app'
+        cur = conn.cursor()
+
+        # Create table if it doesn't exist
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_type TEXT,
+                case_number TEXT,
+                case_year TEXT,
+                scraped_data_json TEXT, -- Store structured data as JSON
+                raw_html TEXT,
+                timestamp DATETIME
+            )
+        ''')
+
+        # Insert query details into the database
+        cur.execute(
+            "INSERT INTO queries (case_type, case_number, case_year, scraped_data_json, raw_html, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            (case_type, case_number, case_year, json.dumps(scraped_data), raw_html, datetime.datetime.now())
+        )
+        conn.commit()
+        conn.close()
+
+        if "error" in scraped_data:
+            flash(scraped_data['error'], 'danger')
+            return render_template('index.html', case_types=CASE_TYPES, years=YEARS)
+        else:
+            return render_template('result.html', data=scraped_data)
+
+    return render_template('index.html', case_types=CASE_TYPES, years=YEARS)
+
+# Route to serve downloaded PDFs (if you implement a download feature)
+@app.route('/downloads/<filename>')
+def downloaded_file(filename):
+    return send_from_directory(DOWNLOAD_FOLDER, filename)
+
+
+if __name__ == '__main__':
+    # Initialize the database table when the app starts if it doesn't exist
+    conn = sqlite3.connect('db.sqlite3')
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS queries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_type TEXT,
+            case_number TEXT,
+            case_year TEXT,
+            scraped_data_json TEXT,
+            raw_html TEXT,
+            timestamp DATETIME
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    app.run(debug=True) # Run in debug mode for development
+
+
+#delhi court.py
+import os
+import time
+import re
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from PIL import Image
+import pytesseract
+import base64 # To return image as base64 for display in web app
+
+# Set path to tesseract.exe
+# IMPORTANT: This path is usually fixed to the Tesseract installation directory
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+def solve_captcha(driver, wait, retries=3):
+    """
+    Attempts to solve the CAPTCHA using Tesseract.
+    Returns the solved CAPTCHA text or None if unsuccessful after retries.
+    """
+    captcha_img_path = "captcha.png"
+    for attempt in range(retries):
+        try:
+            captcha_img_element = wait.until(EC.presence_of_element_located((By.XPATH, "//img[contains(@src,'captcha')]")))
+            captcha_img_element.screenshot(captcha_img_path)
+
+            captcha_text = pytesseract.image_to_string(Image.open(captcha_img_path)).strip()
+            captcha_text = ''.join(filter(str.isalnum, captcha_text)) # Remove non-alphanumeric
+            print(f"CAPTCHA Attempt {attempt + 1}: Solved as '{captcha_text}'")
+
+            # Clean up the screenshot
+            if os.path.exists(captcha_img_path):
+                os.remove(captcha_img_path)
+
+            if captcha_text: # Ensure captcha_text is not empty
+                return captcha_text
+        except Exception as e:
+            print(f"Error during CAPTCHA solving attempt {attempt + 1}: {e}")
+            if os.path.exists(captcha_img_path):
+                os.remove(captcha_img_path)
+            time.sleep(1) # Wait a bit before retrying
+
+    return None # CAPTCHA could not be solved after retries
+
+def scrape_case(case_type, case_number, year):
+    """
+    Scrapes case data from Delhi High Court.
+    Returns a dictionary of parsed data and the raw HTML.
+    """
+    driver = None # Initialize driver to None
+    try:
+        url = "https://delhihighcourt.nic.in/app/get-case-type-status"
+        # UPDATED: Adjust this path to your chromedriver.exe location under your new user folder
+        driver_path = r"C:\Users\neelo\chromedriver-win64\chromedriver-win64\chromedriver.exe"
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080") # Set a larger window size for headless
+        options.add_argument("--log-level=3") # Suppress console logs
+        options.add_experimental_option('excludeSwitches', ['enable-logging']) # Exclude logging
+
+        service = Service(executable_path=driver_path)
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.get(url)
+        wait = WebDriverWait(driver, 15) # Increased wait time
+
+        # Select Case Type
+        case_type_dropdown = wait.until(EC.presence_of_element_located((By.NAME, "case_type")))
+        Select(case_type_dropdown).select_by_visible_text(case_type)
+
+        # Enter Case Number
+        driver.find_element(By.NAME, "case_number").send_keys(case_number)
+
+        # Select Year
+        year_dropdown = wait.until(EC.presence_of_element_located((By.NAME, "cyear")))
+        Select(year_dropdown).select_by_visible_text(str(year))
+
+        # Solve CAPTCHA and submit
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            captcha_text = solve_captcha(driver, wait)
+            if not captcha_text:
+                raise Exception("Failed to solve CAPTCHA after multiple attempts.")
+
+            captcha_input = driver.find_element(By.NAME, "captchaInput")
+            captcha_input.clear() # Clear previous CAPTCHA if any
+            captcha_input.send_keys(captcha_text)
+
+            submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit'], button[type='submit']")))
+            submit_btn.click()
+
+            time.sleep(3) # Give time for the page to process submission
+
+            # Check if CAPTCHA was incorrect or if we've moved to the results page
+            try:
+                # Look for an error message or the results table
+                error_message = driver.find_elements(By.XPATH, "//*[contains(text(), 'Invalid Captcha Code')]")
+                if error_message:
+                    print(f"Attempt {attempt + 1}: Invalid Captcha Code. Retrying...")
+                    # If invalid captcha, we need a new one. Reloading the page is a robust way to get one.
+                    driver.get(url)
+                    wait = WebDriverWait(driver, 15) # Re-initialize wait after reload
+                    # Re-fill the initial form fields
+                    case_type_dropdown = wait.until(EC.presence_of_element_located((By.NAME, "case_type")))
+                    Select(case_type_dropdown).select_by_visible_text(case_type)
+                    driver.find_element(By.NAME, "case_number").send_keys(case_number)
+                    year_dropdown = wait.until(EC.presence_of_element_located((By.NAME, "cyear")))
+                    Select(year_dropdown).select_by_visible_text(str(year))
+                    continue # Try again with a new CAPTCHA
+                else:
+                    # If no error message, check for the results table.
+                    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "table-responsive")))
+                    break # CAPTCHA was correct, found results, proceed
+            except Exception as e:
+                # If no explicit CAPTCHA error and no results table found yet,
+                # it might mean the CAPTCHA was wrong and no specific error message appeared,
+                # or the page didn't load correctly. Reload and retry.
+                print(f"Attempt {attempt + 1}: No explicit CAPTCHA error or results table, reloading for new CAPTCHA... ({e})")
+                driver.get(url) # Reload to get new captcha
+                wait = WebDriverWait(driver, 15) # Re-initialize wait after reload
+                # Re-fill the initial form fields
+                case_type_dropdown = wait.until(EC.presence_of_element_located((By.NAME, "case_type")))
+                Select(case_type_dropdown).select_by_visible_text(case_type)
+                driver.find_element(By.NAME, "case_number").send_keys(case_number)
+                year_dropdown = wait.until(EC.presence_of_element_located((By.NAME, "cyear")))
+                Select(year_dropdown).select_by_visible_text(str(year))
+                continue # Try again with a new CAPTCHA
+
+        else:
+            raise Exception(f"Failed to bypass CAPTCHA after {max_attempts} attempts.")
+
+
+        raw_html = driver.page_source
+        data = {}
+
+        # Check for "No data found" explicitly before parsing
+        if "No Case Data Found" in raw_html or "No record found" in raw_html or "Record not found" in raw_html:
+            data = {"error": "No case data found for the provided details. Please check the inputs (Case Type, Number, Year)."}
+            return data, raw_html # Return immediately if no data
+
+        try:
+            # Parties' names
+            # Look for elements by ID or specific structure that holds names
+            petitioner_name_elem = driver.find_element(By.ID, "pet_name")
+            respondent_name_elem = driver.find_element(By.ID, "res_name")
+            data['parties'] = f"{petitioner_name_elem.text.strip()} VS {respondent_name_elem.text.strip()}"
+        except Exception as e:
+            data['parties'] = "Parties Not Found"
+            print(f"Could not find parties' names: {e}")
+
+        # Filing & next-hearing dates
+        try:
+            # Attempt to find "Filing Date"
+            filing_date_elem = driver.find_element(By.XPATH, "//strong[text()='Filing Date : ']/following-sibling::span[1]")
+            data['filing_date'] = filing_date_elem.text.strip()
+        except Exception as e:
+            data['filing_date'] = "Filing Date Not Found"
+            print(f"Could not find filing date: {e}")
+
+        try:
+            # Attempt to find "Next Date of Listing"
+            next_hearing_date_elem = driver.find_element(By.XPATH, "//strong[text()='Next Date of Listing : ']/following-sibling::span[1]")
+            data['next_hearing_date'] = next_hearing_date_elem.text.strip()
+        except Exception as e:
+            data['next_hearing_date'] = "Next Hearing Date Not Found"
+            print(f"Could not find next hearing date: {e}")
+
+        # Order/judgment PDF links
+        order_links = []
+        try:
+            # Find all tables that might contain orders/judgments
+            tables = driver.find_elements(By.XPATH, "//table[contains(@class, 'table')]")
+            for table in tables:
+                rows = table.find_elements(By.XPATH, ".//tr")
+                for row in rows:
+                    try:
+                        # Look for links that point to PDF files within the row
+                        pdf_link_elems = row.find_elements(By.XPATH, ".//a[contains(@href, '.pdf')]")
+                        for pdf_link_elem in pdf_link_elems:
+                            pdf_url = pdf_link_elem.get_attribute('href')
+                            pdf_text = pdf_link_elem.text.strip()
+                            if pdf_url and pdf_text:
+                                order_links.append({"text": pdf_text, "url": pdf_url})
+                            elif pdf_url: # If no text, use the URL itself or a generic name
+                                order_links.append({"text": f"PDF Link ({os.path.basename(pdf_url)})", "url": pdf_url})
+                    except:
+                        continue # No PDF link in this specific row
+
+        except Exception as e:
+            print(f"Error finding order links: {e}")
+        finally:
+            # Sort links by some criteria if available (e.g., date in text), otherwise just show them
+            # Limiting to a reasonable number for display in UI
+            data['order_links'] = order_links[:10] # Example: show up to 10 recent links
+
+
+        return data, raw_html
+
+    except Exception as e:
+        print(f"An error occurred during scraping: {e}")
+        # Return a general error message for the UI
+        return {"error": f"An unexpected error occurred during scraping: {str(e)}. Please check your ChromeDriver and Tesseract installations, and ensure the court website is accessible."}, ""
+    finally:
+        if driver:
+            driver.quit()
+
+if __name__ == '__main__':
+    # Example usage for testing the scraper directly
+    print("Testing delhi_court.py...")
+    # Replace with actual data for testing a known case or one that might exist
+    # Use a case that you know exists on the Delhi High Court site for robust testing.
+    test_case_type = "W.P.(C)"
+    test_case_number = "1"
+    test_year = "2024" # Adjust to a year where the test case number exists
+
+    scraped_data, raw_html_output = scrape_case(test_case_type, test_case_number, test_year)
+
+    if "error" in scraped_data:
+        print(f"\nScraping Error: {scraped_data['error']}")
+    else:
+        print("\n--- Scraped Data ---")
+        for key, value in scraped_data.items():
+            if key == 'order_links':
+                print(f"{key}:")
+                if value:
+                    for link in value:
+                        print(f"  - {link.get('text', 'N/A')}: {link.get('url', 'N/A')}")
+                else:
+                    print("  No order links found.")
+            else:
+                print(f"{key}: {value}")
+        # Optionally, save raw_html_output to a file for inspection
+        # with open("raw_output.html", "w", encoding="utf-8") as f:
+        #     f.write(raw_html_output)
+        # print("\nRaw HTML saved to raw_output.html")
+
+#index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delhi High Court Case Status</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 700px;
+            margin-top: 50px;
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h2 {
+            color: #007bff;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .form-group label {
+            font-weight: bold;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+            width: 100%;
+            padding: 10px;
+            font-size: 1.1em;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+            border-color: #0056b3;
+        }
+        .alert {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Delhi High Court Case Status</h2>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="/">
+            <div class="form-group">
+                <label for="case_type">Case Type:</label>
+                <select class="form-control" id="case_type" name="case_type" required>
+                    {% for type in case_types %}
+                        <option value="{{ type }}">{{ type }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="case_number">Case Number:</label>
+                <input type="text" class="form-control" id="case_number" name="case_number" placeholder="e.g., 123" required>
+            </div>
+            <div class="form-group">
+                <label for="case_year">Year:</label>
+                <select class="form-control" id="case_year" name="case_year" required>
+                    {% for year in years %}
+                        <option value="{{ year }}">{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Get Status</button>
+        </form>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+#result.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Case Status Result</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 800px;
+            margin-top: 50px;
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h2 {
+            color: #007bff;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: #007bff;
+            color: white;
+            font-weight: bold;
+        }
+        .list-group-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .back-button {
+            margin-top: 30px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Case Status Result</h2>
+
+        {% if data.error %}
+            <div class="alert alert-danger" role="alert">
+                {{ data.error }}
+            </div>
+            <div class="back-button">
+                <a href="/" class="btn btn-secondary">Go Back</a>
+            </div>
+        {% else %}
+            <div class="card">
+                <div class="card-header">Case Details</div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item"><strong>Parties:</strong> {{ data.parties | default("N/A") }}</li>
+                    <li class="list-group-item"><strong>Filing Date:</strong> {{ data.filing_date | default("N/A") }}</li>
+                    <li class="list-group-item"><strong>Next Hearing Date:</strong> {{ data.next_hearing_date | default("N/A") }}</li>
+                </ul>
+            </div>
+
+            {% if data.order_links %}
+                <div class="card mt-4">
+                    <div class="card-header">Orders/Judgments (PDF Links)</div>
+                    <ul class="list-group list-group-flush">
+                        {% for link in data.order_links %}
+                            <li class="list-group-item">
+                                <span>{{ link.text | default("Link") }}</span>
+                                <a href="{{ link.url }}" target="_blank" class="btn btn-sm btn-info">View PDF</a>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <div class="alert alert-info mt-4" role="alert">
+                    No order/judgment links found for this case.
+                </div>
+            {% endif %}
+
+            <div class="back-button">
+                <a href="/" class="btn btn-secondary">Perform another search</a>
+            </div>
+        {% endif %}
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+#Directory:
+#C:\Users\HP\app.py
+#C:\Users\HP\court_gui_selenium.py
+#C:\Users\HP\delhi_court.py
+#C:\Users\HP\court scrapper app\templates\index.html
+#C:\Users\HP\court scrapper app\templates\result.html
+#C:\Users\HP\chromedriver-win64\chromedriver-win64\chromedriver.exe  (use the chrome driver exe as per your google chrome version, LINK: https://googlechromelabs.github.io/chrome-for-testing/)
+#In the command prompt type - python app.py

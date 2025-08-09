@@ -1,0 +1,183 @@
+{
+  "name": "WhatsApp-Driven Google Drive Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "webhookUrl": "https://<your_n8n_url>/webhook-test/a77f97b5-0c14-41d6-8b3d-4c312788e08d",
+        "authentication": "basicAuth",
+        "httpMethod": "POST",
+        "path": "webhook",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        150
+      ],
+      "credentials": {
+        "httpAuth": {
+          "id": "e931481b-871d-487c-a496-e26093d56b0d",
+          "name": "My Twilio"
+        }
+      },
+      "id": "c138d87a-6b4d-4e94-8a1a-4d3393b4f62e"
+    },
+    {
+      "parameters": {
+        "text": "= $json.message",
+        "options": {}
+      },
+      "name": "Twilio WhatsApp",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        750,
+        150
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "f516641b-4f9e-4c07-b248-2b81048b2611",
+          "name": "My Twilio Credential"
+        }
+      },
+      "id": "d040a4e7-494d-44a3-8321-72948b81d77a"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "fileId": "= $json.fileId",
+        "options": {}
+      },
+      "name": "Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        150
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "g522881b-4b1e-4c07-b248-2b81048b2611",
+          "name": "My Google Drive Credential"
+        }
+      },
+      "id": "a900c3b8-6b4d-4e94-8a1a-4d3393b4f62e"
+    },
+    {
+      "parameters": {
+        "query": "LIST",
+        "options": {}
+      },
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        500,
+        150
+      ],
+      "id": "a245f7c3-3e0f-48e0-a4d1-c1f9d5a7114b"
+    },
+    {
+      "parameters": {
+        "text": "= $json.content",
+        "options": {}
+      },
+      "name": "OpenAI GPT-4o",
+      "type": "n8n-nodes-base.openAI",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        150
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "b345f7c3-3e0f-48e0-a4d1-c1f9d5a7114b",
+          "name": "My OpenAI Credential"
+        }
+      },
+      "id": "f891d4e7-494d-44a3-8321-72948b81d77a"
+    },
+    {
+      "parameters": {
+        "spreadsheetId": "your_spreadsheet_id",
+        "resource": {
+          "range": "A1",
+          "values": [
+            [
+              "= $json.command",
+              "= $json.timestamp"
+            ]
+          ]
+        },
+        "options": {}
+      },
+      "name": "Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        150
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h678a4b2-5f6e-4c07-b248-2b81048b2611",
+          "name": "My Google Sheets Credential"
+        }
+      },
+      "id": "g522881b-4f9e-4c07-b248-2b81048b2611"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": [
+      {
+        "node": "Switch",
+        "type": "main",
+        "index": 0
+      }
+    ],
+    "Switch": [
+      {
+        "node": "Twilio WhatsApp",
+        "type": "main",
+        "index": 0,
+        "parameters": {
+          "query": "LIST"
+        }
+      },
+      {
+        "node": "Google Drive",
+        "type": "main",
+        "index": 1,
+        "parameters": {
+          "query": "DELETE"
+        }
+      },
+      {
+        "node": "Google Drive",
+        "type": "main",
+        "index": 2,
+        "parameters": {
+          "query": "MOVE"
+        }
+      },
+      {
+        "node": "OpenAI GPT-4o",
+        "type": "main",
+        "index": 3,
+        "parameters": {
+          "query": "SUMMARY"
+        }
+      }
+    ],
+    "OpenAI GPT-4o": [
+      {
+        "node": "Google Sheets",
+        "type": "main",
+        "index": 0
+      }
+    ]
+  }
+}
